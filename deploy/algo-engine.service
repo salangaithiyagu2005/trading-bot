@@ -1,0 +1,23 @@
+[Unit]
+Description=NSE Kite trading engine
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=algo
+Group=algo
+WorkingDirectory=/opt/nsebot
+EnvironmentFile=/etc/algo/env
+UMask=0077
+ExecStart=/opt/nsebot/.venv/bin/nsebot-engine
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nsebot
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: nsebot
+Version: 0.1.0
+Summary: Rule-based NSE intraday options trading system
+Requires-Python: >=3.12
+Requires-Dist: fastapi<1,>=0.110
+Requires-Dist: httpx<1,>=0.27
+Requires-Dist: kiteconnect<6,>=5.0
+Requires-Dist: PyYAML<7,>=6.0
+Requires-Dist: uvicorn[standard]<1,>=0.29

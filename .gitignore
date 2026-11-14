@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+var/
+.env
+credentials.json
+token.json
+algo.db

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NSE Bot Operator</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">NSE · KITE CONNECT</p>
+      <h1>Operator Console</h1>
+    </div>
+    <div id="mode-banner" class="mode-banner">Loading mode…</div>
+  </header>
+  <div id="health-strip" class="health-strip" aria-label="System health"></div>
+  <nav class="tabs" aria-label="Main panels">
+    <button class="tab active" data-panel="today">Today</button>
+    <button class="tab" data-panel="tape">Tape</button>
+    <button class="tab" data-panel="trade">Trade</button>
+    <button class="tab" data-panel="rules">Rules</button>
+    <button class="tab" data-panel="review">Review</button>
+    <button class="tab" data-panel="settings">Settings</button>
+  </nav>
+  <main>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <section id="panel-today" class="panel active">
+      <div class="section-head"><div><p class="eyebrow">SESSION CONTROL</p><h2>Today</h2></div>
+        <div class="actions"><button id="arm-button" class="primary">Arm session</button>
+          <button id="kill-button" class="danger">Kill switch</button></div></div>
+      <div class="grid cards">
+        <article class="card"><span>Engine state</span><strong id="state">—</strong><small id="block-reason"></small></article>
+        <article class="card"><span>Bias</span><strong id="bias">—</strong><small id="bias-score"></small></article>
+        <article class="card"><span>Token</span><strong id="token-state">—</strong><small id="token-expiry"></small></article>
+        <article class="card"><span>Mode</span><strong id="active-mode">—</strong><small id="next-mode">—</small></article>
+      </div>
+      <article class="card"><h3>Six bias lines</h3><div id="bias-lines" class="list"></div></article>
+      <div class="grid two">
+        <article class="card"><h3>Sector leaders</h3><div id="sectors" class="chips"></div></article>
+        <article class="card"><h3>Active shortlist</h3><div id="shortlist" class="list"></div></article>
+      </div>
+      <article class="card"><h3>Top-20 F&amp;O stock pool</h3><div id="top20" class="table-wrap"></div></article>
+      <article class="card risk-card">
+        <div><h3>Risk guard</h3><p>Hard cap <strong id="risk-cap">—</strong></p><p>If stopped, estimated loss <strong id="risk-preview">—</strong></p></div>
+        <div class="actions"><button id="mode-button">Enable Live (Next Session)</button></div>
+      </article>
+    </section>
+    <section id="panel-tape" class="panel">
+      <div class="section-head"><div><p class="eyebrow">DECISION LOG</p><h2>Tape</h2></div>
+        <select id="reason-filter"><option value="">All reasons</option></select></div>
+      <div id="events" class="event-list"></div>
+    </section>
+    <section id="panel-trade" class="panel">
+      <div class="section-head"><div><p class="eyebrow">PAPER VS LIVE</p><h2>Trade history</h2></div>
+        <div class="segmented"><button data-mode="paper" class="active">Paper</button><button data-mode="live">Live</button><button data-mode="all">All</button></div></div>
+      <div id="trade-summary" class="grid cards"></div>
+      <div id="trades-table" class="table-wrap"></div>
+      <article class="card"><h3>Selected trade</h3><pre id="trade-detail">Select a trade row.</pre></article>
+    </section>
+    <section id="panel-rules" class="panel">
+      <div class="section-head"><div><p class="eyebrow">NEXT SESSION ONLY</p><h2>Rules</h2></div></div>
+      <label>Scheduled YAML<textarea id="rules-yaml" rows="26" spellcheck="false"></textarea></label>
+      <label>Change note<input id="rules-note" type="text" maxlength="200"></label>
+      <button id="save-rules" class="primary">Save for next session</button>
+      <article class="card"><h3>Locked session rules</h3><pre id="locked-rules">No session rules latched.</pre></article>
+    </section>
+    <section id="panel-review" class="panel">
+      <div class="section-head"><div><p class="eyebrow">HUMAN REVIEW</p><h2>Review</h2></div></div>
+      <label>Session date<input id="review-day" type="date"></label>
+      <fieldset><legend>Tags</legend><div id="review-tags" class="tag-grid"></div></fieldset>
+      <label>Notes<textarea id="review-note" rows="5"></textarea></label>
+      <div class="actions"><button id="draft-review">Draft with AI (on click)</button><button id="save-review" class="primary">Save review</button></div>
+    </section>
+    <section id="panel-settings" class="panel">
+      <div class="section-head"><div><p class="eyebrow">LOCAL CONFIGURATION</p><h2>Settings</h2></div></div>
+      <article class="card">
+        <h3>Kite token manager</h3><p id="token-summary">—</p>
+        <div class="actions"><a class="button primary" href="/login">Regenerate Kite Token</a>
+          <button id="verify-token">Verify Token Now</button>
+          <button id="clear-token" class="danger">Clear Token</button></div>
+        <details><summary>Direct token fallback</summary>
+          <label>Access token<input id="access-token" type="password" autocomplete="off"></label>
+          <label>User ID<input id="token-user" autocomplete="off"></label>
+          <button id="save-token" class="primary">Save Access Token (local only)</button>
+          <label>Request token<input id="request-token" type="password" autocomplete="off"></label>
+          <button id="exchange-token">Exchange Request Token</button>
+        </details>
+      </article>
+      <article class="card">
+        <h3>Credentials &amp; webhook <span class="muted">write-only</span></h3>
+        <pre id="credential-status">—</pre>
+        <div class="grid two">
+          <label>KITE_API_KEY<input data-credential="KITE_API_KEY" autocomplete="off"></label>
+          <label>KITE_API_SECRET<input data-credential="KITE_API_SECRET" type="password" autocomplete="new-password"></label>
+          <label>XAI_API_KEY<input data-credential="XAI_API_KEY" type="password" autocomplete="new-password"></label>
+          <label>ALERT_WEBHOOK<input data-credential="ALERT_WEBHOOK" type="password" autocomplete="new-password"></label>
+        </div><button id="save-credentials" class="primary">Save credentials</button>
+      </article>
+      <article class="card">
+        <h3>Runtime app settings</h3>
+        <label>Kite redirect URL<input id="redirect-url" type="url"></label>
+        <label>UI polling interval (ms)<input id="poll-interval" type="number" min="250" max="60000"></label>
+        <button id="save-runtime">Save runtime settings</button>
+      </article>
+      <article class="card">
+        <h3>Data files <span class="muted">next session</span></h3>
+        <label>File<select id="datafile-name"><option>sector_fno_map.yaml</option><option>nse_holidays.txt</option><option>nifty50.txt</option></select></label>
+        <textarea id="datafile-content" rows="15" spellcheck="false"></textarea>
+        <p id="datafile-count" class="muted"></p><button id="save-datafile">Validate &amp; save data file</button>
+      </article>
+      <article class="card">
+        <h3>Structured strategy config</h3>
+        <p class="muted">Grouped rules fields. Changes apply next session only.</p>
+        <div id="structured-form"></div>
+        <label>Change note<input id="structured-note" type="text" maxlength="200"></label>
+        <button id="save-structured-rules" class="primary">Save structured rules</button>
+      </article>
+    </section>
+  </main>
+  <footer><span>Paper mode is the default. Live orders require the server-side LIVE_TRADING lock.</span><span id="last-updated">—</span></footer>
+</body>
+</html>

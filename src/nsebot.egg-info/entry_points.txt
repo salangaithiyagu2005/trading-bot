@@ -1,0 +1,3 @@
+[console_scripts]
+nsebot-api = nsebot.api.app:main
+nsebot-engine = nsebot.engine:main

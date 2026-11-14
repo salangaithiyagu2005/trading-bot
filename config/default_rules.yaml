@@ -1,0 +1,71 @@
+version: 1
+timezone: Asia/Kolkata
+session:
+  research_start: "09:15"
+  no_trade_before: "09:30"
+  no_new_trade_after: "14:30"
+  flatten_by: "15:15"
+  reconcile_at: "15:20"
+  report_at: "15:40"
+  market_close: "15:30"
+calendar:
+  skip_weekends: true
+  skip_exchange_holidays: true
+  skip_nifty_expiry_day: true
+risk:
+  trading_mode: paper
+  max_trades_per_day: 1
+  max_open_positions: 1
+  reward_r_multiple: 2
+  premium_stop_pct: 30
+  min_premium_inr: 40
+  max_risk_inr_per_trade: 5000
+  max_lots: 1
+  product: MIS
+  order_style: LIMIT
+universe:
+  phase: sector_fno_stock
+  strike: ATM
+  expiry: monthly_min_dte
+  min_dte_days: 7
+  max_bid_ask_pct_of_mid: 1.5
+  min_oi: 50000
+  min_oi_lots: 100
+screener:
+  top_sectors: 2
+  top_pool_size: 20
+  shortlist_size: 5
+  require_winning_sector: true
+  min_stock_move_pct: 0.5
+  max_stock_move_pct: 4.0
+bias:
+  bullish_if_score_gte: 6
+  bearish_if_score_lte: -6
+  band_pct: 0.15
+  vwap_flat_pct: 0.05
+  or_body_min_ratio: 0.4
+  or_pos_strong: 0.70
+  or_pos_mild: 0.55
+  ema_sep_pct: 0.10
+  breadth_strong: 70
+  breadth_mild: 60
+  breadth_bear_strong: 30
+  breadth_bear_mild: 40
+  breadth_min_names: 48
+  vix_veto_up_pct: 8
+  dead_range_atr_frac: 0.25
+sets:
+  active:
+    - orb_vwap
+  confirm_timeframe: 5m
+  trigger_timeframe: 1m
+  confirm_within_bars_5m: 2
+  volume_mult: 1.2
+  volume_lookback: 20
+costs:
+  brokerage_inr_per_executed_order: 20
+  stt_sell_premium_rate: 0.0015
+  txn_rate_on_premium: 0.0003553
+  sebi_rate: 0.000001
+  stamp_buy_rate: 0.00003
+  gst_rate: 0.18

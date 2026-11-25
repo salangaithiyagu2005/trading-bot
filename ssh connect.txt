@@ -1,0 +1,1 @@
+ssh -i C:\Users\Arun\.ssh\mumbai-trading-bot.pem ec2-user@3.111.181.107

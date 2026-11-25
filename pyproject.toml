@@ -16,6 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
+nsebot = "nsebot.cli:main"
 nsebot-engine = "nsebot.engine:main"
 nsebot-api = "nsebot.api.app:main"
 

@@ -7,6 +7,7 @@ src/nsebot/bias.py
 src/nsebot/calendar_mod.py
 src/nsebot/candles.py
 src/nsebot/chain.py
+src/nsebot/cli.py
 src/nsebot/clock.py
 src/nsebot/engine.py
 src/nsebot/execution.py
@@ -31,6 +32,7 @@ src/nsebot/api/__init__.py
 src/nsebot/api/app.py
 src/nsebot/sets/__init__.py
 tests/test_api.py
+tests/test_cli.py
 tests/test_config_store.py
 tests/test_engine_safety.py
 tests/test_foundation.py

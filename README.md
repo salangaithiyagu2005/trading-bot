@@ -68,6 +68,29 @@ Run only one engine process at a time. In the UI, check the **System Health Stri
 
 If a command such as `nsebot` is not found, confirm the virtual environment is active and rerun `python -m pip install -e .`.
 
+## Initial EC2 setup and deployment
+
+The EC2 setup script assumes a systemd-based Linux host, Python 3.12 or newer, and this repository checked out at `/home/ec2-user/trading-bot`. It creates the `algo` service account if needed, deploys the checkout to `/opt/nsebot`, creates `/var/lib/nsebot` for persistent runtime data, installs the Python project in a virtual environment, installs/enables the API and engine systemd units, and starts them. It does not install Python or invent the missing NSE calendar and Nifty 50 data.
+
+Run from the EC2 checkout:
+
+```bash
+cd /home/ec2-user/trading-bot
+sudo bash deploy/setup-ec2.sh
+```
+
+The script is safe to rerun after source changes: it preserves `/etc/algo/env` and `/var/lib/nsebot`, redeploys source to `/opt/nsebot`, and restarts the services. Opening or editing the source alone does not update the running services; rerun the script to deploy. It excludes Git metadata, virtual environments, local runtime files, SSH connection notes, and private key files from the deployment copy.
+
+The first run generates a UI password in the protected `/etc/algo/env` file. Retrieve it when needed with `sudo grep '^UI_PASSWORD=' /etc/algo/env`; the UI username is `operator`. The API binds to `127.0.0.1:8000`, so connect from your computer using an SSH tunnel rather than opening port 8000 publicly:
+
+```bash
+ssh -L 8000:127.0.0.1:8000 ec2-user@<EC2_PUBLIC_DNS>
+```
+
+Then open `http://127.0.0.1:8000` locally. Configure Kite credentials through the UI after starting the API. Check service logs with `sudo journalctl -u algo-api -u algo-engine -f` and status with `sudo systemctl status algo-api algo-engine`.
+
+The required verified `nse_holidays.txt` and `nifty50.txt` files are not included in this repository; configure valid files in the UI before expecting a healthy engine. Keep `LIVE_TRADING=false`. This setup does not make the project ready for live trading.
+
 ### Local debugging
 
 - Check that the API is responding: `Invoke-RestMethod http://127.0.0.1:8000/healthz`.

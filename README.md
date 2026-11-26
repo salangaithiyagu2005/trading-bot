@@ -70,7 +70,7 @@ If a command such as `nsebot` is not found, confirm the virtual environment is a
 
 ## Initial EC2 setup and deployment
 
-The EC2 setup script assumes a systemd-based Linux host, Python 3.12 or newer, and this repository checked out at `/home/ec2-user/trading-bot`. It creates the `algo` service account if needed, deploys the checkout to `/opt/nsebot`, creates `/var/lib/nsebot` for persistent runtime data, installs the Python project in a virtual environment, installs/enables the API and engine systemd units, and starts them. It does not install Python or invent the missing NSE calendar and Nifty 50 data.
+The EC2 setup script assumes a systemd-based Linux host, Python 3.12 or newer, and this repository checked out at `/home/ec2-user/trading-bot`. It creates the `algo` service account if needed, deploys the checkout to `/opt/nsebot`, creates `/var/lib/nsebot` for persistent runtime data, installs the Python project in a virtual environment, provisions the configured DynamoDB table, installs/enables the API and engine systemd units, and starts them. It does not install Python or invent the missing NSE calendar and Nifty 50 data.
 
 Run from the EC2 checkout:
 
@@ -79,7 +79,7 @@ cd /home/ec2-user/trading-bot
 sudo bash deploy/setup-ec2.sh
 ```
 
-The script is safe to rerun after source changes: it preserves `/etc/algo/env` and `/var/lib/nsebot`, redeploys source to `/opt/nsebot`, and restarts the services. Opening or editing the source alone does not update the running services; rerun the script to deploy. It excludes Git metadata, virtual environments, local runtime files, SSH connection notes, and private key files from the deployment copy.
+The first run creates `/etc/algo/env` with DynamoDB selected. Set `AWS_REGION` in that file and ensure the EC2 instance profile can access DynamoDB before rerunning setup. The script is safe to rerun after source changes: it preserves `/etc/algo/env` and `/var/lib/nsebot`, redeploys source to `/opt/nsebot`, and restarts the services. Opening or editing the source alone does not update the running services; rerun the script to deploy. It excludes Git metadata, virtual environments, local runtime files, SSH connection notes, and private key files from the deployment copy.
 
 The first run generates a UI password in the protected `/etc/algo/env` file. Retrieve it when needed with `sudo grep '^UI_PASSWORD=' /etc/algo/env`; the UI username is `operator`. The API binds to `127.0.0.1:8000`, so connect from your computer using an SSH tunnel rather than opening port 8000 publicly:
 
@@ -90,6 +90,34 @@ ssh -L 8000:127.0.0.1:8000 ec2-user@<EC2_PUBLIC_DNS>
 Then open `http://127.0.0.1:8000` locally. Configure Kite credentials through the UI after starting the API. Check service logs with `sudo journalctl -u algo-api -u algo-engine -f` and status with `sudo systemctl status algo-api algo-engine`.
 
 The required verified `nse_holidays.txt` and `nifty50.txt` files are not included in this repository; configure valid files in the UI before expecting a healthy engine. Keep `LIVE_TRADING=false`. This setup does not make the project ready for live trading.
+
+### Use Amazon DynamoDB
+
+EC2 deployments use a single DynamoDB table with on-demand billing. Its logical records (sessions, trades, rules, orders, events, reviews, commands, settings, and engine status) use partition/sort keys and a secondary index for pending commands. Local development and tests continue to use SQLite by default; set `DATABASE_BACKEND=dynamodb` to use DynamoDB.
+
+1. In AWS, choose a region and attach an EC2 instance profile that grants the app `GetItem`, `PutItem`, `UpdateItem`, `Query`, and `Scan` access to the chosen table. Setup also needs `DescribeTable`, `CreateTable`, and `UpdateTable` to provision the table and index. Do not put AWS access keys in the repository or environment file; boto3 uses the instance role on EC2.
+2. Set `AWS_REGION` and `DYNAMODB_TABLE` in `/etc/algo/env`. The setup script creates the table if needed. If the table must be initialized manually, use:
+
+   ```bash
+   sudo -u algo bash -c 'set -a; . /etc/algo/env; set +a; /opt/nsebot/.venv/bin/nsebot-dynamodb-init'
+   ```
+
+3. If migrating an existing SQLite install, stop the services, back up SQLite, and copy its records to DynamoDB:
+
+   ```bash
+   sudo systemctl stop algo-api algo-engine
+   sudo -u algo cp -p /var/lib/nsebot/algo.db "/var/lib/nsebot/algo.db.before-dynamodb.$(date +%Y%m%d%H%M%S)"
+   sudo -u algo bash -c 'set -a; . /etc/algo/env; set +a; /opt/nsebot/.venv/bin/nsebot-migrate-sqlite --source "$DATA_DIR/algo.db"'
+   ```
+
+4. Start and check both services:
+
+   ```bash
+   sudo systemctl start algo-api algo-engine
+   sudo systemctl status algo-api algo-engine
+   ```
+
+The migration preserves record IDs and can be rerun. It migrates `algo.db` records only; credentials, Kite token, and NSE files remain in `/var/lib/nsebot`. This implementation scans DynamoDB for some all-history reports and event views, so usage and charges can grow with stored data. On-demand DynamoDB is not guaranteed to be free; eligibility and pricing depend on the AWS account and current AWS terms, so check pricing before enabling it.
 
 ### Local debugging
 

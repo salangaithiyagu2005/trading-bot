@@ -161,28 +161,22 @@ class Engine:
         return os.environ.get("LIVE_TRADING", "false").strip().lower() == "true"
 
     def _scheduled_version(self) -> int:
-        row = self.conn.execute(
-            "SELECT id FROM rules_versions WHERE status='scheduled' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-        if row is None:
+        rows = logstore.list_rule_versions(self.conn, status="scheduled", descending=True)
+        if not rows:
             raise RuntimeError("no scheduled rules version found")
-        return int(row["id"])
+        return int(rows[0]["id"])
 
     def _load_or_create_session(self) -> None:
         day = self.active_day.isoformat()
-        row = self.conn.execute("SELECT * FROM sessions WHERE day=?", (day,)).fetchone()
+        row = logstore.get_session(self.conn, day)
         if row is None:
-            self.conn.execute(
-                """
-                INSERT INTO sessions(day, rules_version, state, mode, started_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    day, self.rules_version, State.IDLE.value,
-                    self.rules.risk.trading_mode, self.clock().isoformat(),
-                ),
-            )
-            self.conn.commit()
+            logstore.create_session(self.conn, {
+                "day": day,
+                "rules_version": self.rules_version,
+                "state": State.IDLE.value,
+                "mode": self.rules.risk.trading_mode,
+                "started_at": self.clock().isoformat(),
+            })
             self.state = State.IDLE
             self.user_armed = False
         else:
@@ -192,9 +186,7 @@ class Engine:
                 raise RuntimeError(f"unknown persisted engine state: {row['state']}") from exc
             self.user_armed = bool(row["user_armed"])
             if self.rules_latched:
-                version = self.conn.execute(
-                    "SELECT yaml FROM rules_versions WHERE id=?", (row["rules_version"],)
-                ).fetchone()
+                version = logstore.get_rule_version(self.conn, row["rules_version"])
                 if version is not None:
                     self.rules = validate(yaml.safe_load(version["yaml"]))
                     self.rules_version = int(row["rules_version"])
@@ -252,25 +244,19 @@ class Engine:
         reason_text = logstore.render(reason.value, details)
         previous = self.state
         self.state = target
-        self.conn.execute(
-            "UPDATE sessions SET state=?, block_reason=? WHERE day=?",
-            (
-                target.value,
-                reason.value if target == State.BLOCKED else None,
-                self._today(),
-            ),
-        )
-        self.conn.execute(
-            """
-            INSERT INTO events(day, ts, state_from, state_to, reason, reason_text, snapshot_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                self._today(), self.clock().isoformat(), previous.value, target.value,
-                reason.value, reason_text, json.dumps(details, default=str),
-            ),
-        )
-        self.conn.commit()
+        logstore.update_session(self.conn, self._today(), {
+            "state": target.value,
+            "block_reason": reason.value if target == State.BLOCKED else None,
+        })
+        logstore.insert_event(self.conn, {
+            "day": self._today(),
+            "ts": self.clock().isoformat(),
+            "state_from": previous.value,
+            "state_to": target.value,
+            "reason": reason.value,
+            "reason_text": reason_text,
+            "snapshot_json": json.dumps(details, default=str),
+        })
         self._write_status(force=True)
         if target in {State.BLOCKED, State.HALTED}:
             self._notify(reason_text)
@@ -311,11 +297,10 @@ class Engine:
         self.rules = load_scheduled(self.conn)
         self.rules_version = self._scheduled_version()
         self.rules_latched = True
-        self.conn.execute(
-            "UPDATE sessions SET rules_version=?, mode=? WHERE day=?",
-            (self.rules_version, self.rules.risk.trading_mode, self._today()),
-        )
-        self.conn.commit()
+        logstore.update_session(self.conn, self._today(), {
+            "rules_version": self.rules_version,
+            "mode": self.rules.risk.trading_mode,
+        })
         if self.rules.risk.trading_mode == "live":
             self._transition(
                 State.BLOCKED,
@@ -547,17 +532,15 @@ class Engine:
 
     def _record_event(self, reason: Reason, snapshot: dict) -> None:
         text = logstore.render(reason.value, snapshot)
-        self.conn.execute(
-            """
-            INSERT INTO events(day, ts, state_from, state_to, reason, reason_text, snapshot_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                self._today(), self.clock().isoformat(), self.state.value, self.state.value,
-                reason.value, text, json.dumps(snapshot, default=str),
-            ),
-        )
-        self.conn.commit()
+        logstore.insert_event(self.conn, {
+            "day": self._today(),
+            "ts": self.clock().isoformat(),
+            "state_from": self.state.value,
+            "state_to": self.state.value,
+            "reason": reason.value,
+            "reason_text": text,
+            "snapshot_json": json.dumps(snapshot, default=str),
+        })
 
     def _screen_market(self, bar_end: datetime) -> None:
         if self.rules.universe.phase != "sector_fno_stock":
@@ -607,18 +590,11 @@ class Engine:
             if self.screener_result else None
         )
         self.screener_result = result
-        self.conn.execute(
-            """
-            UPDATE sessions SET winning_sectors=?, top20_json=?, shortlist_json=? WHERE day=?
-            """,
-            (
-                json.dumps([item.tradingsymbol for item in result.winning_sectors]),
-                json.dumps([item.__dict__ for item in result.top_pool], default=str),
-                json.dumps([item.__dict__ for item in result.shortlist], default=str),
-                self._today(),
-            ),
-        )
-        self.conn.commit()
+        logstore.update_session(self.conn, self._today(), {
+            "winning_sectors": json.dumps([item.tradingsymbol for item in result.winning_sectors]),
+            "top20_json": json.dumps([item.__dict__ for item in result.top_pool], default=str),
+            "shortlist_json": json.dumps([item.__dict__ for item in result.shortlist], default=str),
+        })
         shortlist = tuple(item.tradingsymbol for item in result.shortlist)
         if previous_shortlist != shortlist:
             if shortlist:
@@ -796,9 +772,7 @@ class Engine:
                 {"set_id": set_id, "detail": "no_new_trade_after reached"},
             )
             return
-        count = self.conn.execute(
-            "SELECT COUNT(*) FROM trades WHERE day=?", (self._today(),)
-        ).fetchone()[0]
+        count = logstore.count_trades(self.conn, day=self._today())
         if count >= self.rules.risk.max_trades_per_day:
             self._reject_stock_confirmation(
                 stock, set_id, state, Reason.CONFIRM_FAILED,
@@ -904,9 +878,7 @@ class Engine:
         self.instruments_by_token[option.token] = option
         self._subscription_tokens.append(option.token)
         self.ws_subscribed_count = len(set(self._subscription_tokens))
-        number = self.conn.execute(
-            "SELECT COUNT(DISTINCT tag) FROM orders WHERE day=?", (self._today(),)
-        ).fetchone()[0] + 1
+        number = logstore.count_order_tags(self.conn, self._today()) + 1
         tag = f"D{self.active_day:%Y%m%d}{number:02d}"
         self._transition(State.ENTRY_WORKING, Reason.ORDER_SUBMITTED, {
             "symbol": option.tradingsymbol, "qty": bracket.quantity,
@@ -931,31 +903,36 @@ class Engine:
         self.active_option_last_seen = self.clock()
         self.active_mfe = Decimal("0")
         self.active_mae = Decimal("0")
-        self.conn.execute(
-            """
-            INSERT INTO orders(day, tag, role, mode, broker_order_id, symbol, side, qty,
-                               limit_price, status, filled_qty, avg_price)
-            VALUES (?, ?, 'entry', 'paper', NULL, ?, 'BUY', ?, ?, 'filled', ?, ?)
-            """,
-            (
-                self._today(), tag, option.tradingsymbol, bracket.quantity,
-                str(bracket.entry_limit), bracket.quantity, str(fill.price),
-            ),
-        )
-        self.conn.execute(
-            """
-            INSERT INTO trades(day, mode, underlying, sector, symbol, right, strike, expiry,
-                               qty, entry_price, stop_trigger, target, rules_version, set_id)
-            VALUES (?, 'paper', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                self._today(), stock.tradingsymbol, sector, option.tradingsymbol,
-                right, str(option.strike), expiry.isoformat(), bracket.quantity,
-                str(fill.price), str(bracket.stop_trigger), str(bracket.target),
-                self.rules_version, set_id,
-            ),
-        )
-        self.conn.commit()
+        logstore.insert_order(self.conn, {
+            "day": self._today(),
+            "tag": tag,
+            "role": "entry",
+            "mode": "paper",
+            "broker_order_id": None,
+            "symbol": option.tradingsymbol,
+            "side": "BUY",
+            "qty": bracket.quantity,
+            "limit_price": str(bracket.entry_limit),
+            "status": "filled",
+            "filled_qty": bracket.quantity,
+            "avg_price": str(fill.price),
+        })
+        logstore.insert_trade(self.conn, {
+            "day": self._today(),
+            "mode": "paper",
+            "underlying": stock.tradingsymbol,
+            "sector": sector,
+            "symbol": option.tradingsymbol,
+            "right": right,
+            "strike": str(option.strike),
+            "expiry": expiry.isoformat(),
+            "qty": bracket.quantity,
+            "entry_price": str(fill.price),
+            "stop_trigger": str(bracket.stop_trigger),
+            "target": str(bracket.target),
+            "rules_version": self.rules_version,
+            "set_id": set_id,
+        })
         for item in self._set_state.values():
             item.update({"armed": False, "armed_bar_5m_index": None, "side": None})
         self._transition(State.MANAGING, Reason.ORDER_FILLED, {
@@ -973,18 +950,15 @@ class Engine:
             self.active_bracket.entry_limit, fill.price, fill.quantity, self.rules
         )
         net = gross - charge
-        self.conn.execute(
-            """
-            UPDATE trades SET exit_price=?, exit_reason=?, mfe=?, mae=?, gross_pnl=?,
-                              costs=?, net_pnl=? WHERE day=?
-            """,
-            (
-                str(fill.price), self.paper_broker.position.exit_reason,
-                str(self.active_mfe), str(self.active_mae), str(gross),
-                str(charge), str(net), self._today(),
-            ),
-        )
-        self.conn.commit()
+        logstore.update_trade(self.conn, self._today(), {
+            "exit_price": str(fill.price),
+            "exit_reason": self.paper_broker.position.exit_reason,
+            "mfe": str(self.active_mfe),
+            "mae": str(self.active_mae),
+            "gross_pnl": str(gross),
+            "costs": str(charge),
+            "net_pnl": str(net),
+        })
         if transition and self.state in {State.MANAGING, State.HALTED}:
             self._transition(State.DONE, reason, {"price": fill.price})
         else:
@@ -1119,14 +1093,11 @@ class Engine:
             "SIDEWAYS": Reason.BIAS_SIDEWAYS,
         }[result.bias.value]
         line_points = {line.name: line.points for line in result.lines}
-        self.conn.execute(
-            "UPDATE sessions SET bias=?, score=?, veto=? WHERE day=?",
-            (
-                result.bias.value, result.score,
-                result.veto.value if result.veto else None, self._today(),
-            ),
-        )
-        self.conn.commit()
+        logstore.update_session(self.conn, self._today(), {
+            "bias": result.bias.value,
+            "score": result.score,
+            "veto": result.veto.value if result.veto else None,
+        })
         self._record_event(reason, {
             "score": result.score,
             "prev": line_points["prev_close"],
@@ -1418,9 +1389,7 @@ class Engine:
             raise RuntimeError(f"unable to read {path.name}") from exc
 
     def _block_reason(self) -> str | None:
-        row = self.conn.execute(
-            "SELECT block_reason FROM sessions WHERE day=?", (self._today(),)
-        ).fetchone()
+        row = logstore.get_session(self.conn, self._today())
         return row["block_reason"] if row else None
 
     def _expire_token_if_needed(self) -> None:
@@ -1547,10 +1516,7 @@ class Engine:
             return
         if not self._live_allowed() or self.gateway is None or self.execution is None:
             raise RuntimeError("live kill cannot safely reach the broker")
-        local_orders = self.conn.execute(
-            "SELECT broker_order_id, symbol FROM orders WHERE day=?",
-            (self._today(),),
-        ).fetchall()
+        local_orders = logstore.list_orders(self.conn, self._today())
         symbols = {row["symbol"] for row in local_orders if row["symbol"]}
         broker_orders = self.gateway.orders()
         open_statuses = {
@@ -1651,9 +1617,7 @@ class Engine:
             raise RuntimeError("kill flatten orders submitted but broker is not flat yet")
 
     def _process_one_command(self) -> bool:
-        command = self.conn.execute(
-            "SELECT id, name, payload_json FROM commands WHERE status='pending' ORDER BY id LIMIT 1"
-        ).fetchone()
+        command = logstore.get_pending_command(self.conn)
         if command is None:
             return False
         result = "done"
@@ -1670,9 +1634,7 @@ class Engine:
                 ):
                     raise RuntimeError("session is not in an armable state")
                 self.user_armed = True
-                self.conn.execute(
-                    "UPDATE sessions SET user_armed=1 WHERE day=?", (self._today(),)
-                )
+                logstore.update_session(self.conn, self._today(), {"user_armed": 1})
             elif name == "KILL":
                 if self.state == State.DONE:
                     raise RuntimeError("session is already done")
@@ -1748,9 +1710,11 @@ class Engine:
                 raise RuntimeError(f"unsupported command {name}")
         except Exception as exc:
             result = f"rejected: {exc}"
-        self.conn.execute(
-            "UPDATE commands SET status=?, result_text=? WHERE id=?",
-            ("done" if result == "done" else "rejected", result, command["id"]),
+        logstore.update_command(
+            self.conn,
+            int(command["id"]),
+            "done" if result == "done" else "rejected",
+            result,
         )
         self.conn.commit()
         return True
@@ -1760,9 +1724,7 @@ class Engine:
             self._write_status(force=True)
             return
         self._expire_token_if_needed()
-        pending = self.conn.execute(
-            "SELECT name FROM commands WHERE status='pending' ORDER BY id LIMIT 1"
-        ).fetchone()
+        pending = logstore.get_pending_command(self.conn)
         if not self._startup_verified:
             try:
                 token_available = self._valid_token_data() is not None

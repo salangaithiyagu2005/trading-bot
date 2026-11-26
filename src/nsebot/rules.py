@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 import sysconfig
 from dataclasses import dataclass
 from decimal import Decimal
@@ -9,6 +8,9 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 import yaml
+
+from nsebot import logstore
+from nsebot.dynamodb import DynamoDBStore
 
 
 class RulesValidationError(ValueError):
@@ -218,11 +220,28 @@ def _default_document() -> dict[str, Any]:
     return document
 
 
-def _document_from_row(row: sqlite3.Row | tuple) -> Rules:
-    return validate(yaml.safe_load(row[0]))
+def _document_from_row(row: Any) -> Rules:
+    if isinstance(row, str):
+        value = row
+    elif hasattr(row, "keys"):
+        value = row["yaml"]
+    else:
+        value = row[0]
+    return validate(yaml.safe_load(value))
 
 
-def _ensure_default(conn: sqlite3.Connection) -> None:
+def _ensure_default(conn: Any) -> None:
+    if isinstance(conn, DynamoDBStore):
+        if not logstore.list_rule_versions(conn):
+            document = _default_document()
+            validate(document)
+            logstore.save_rule_version(conn, {
+                "created_at": _now_iso(),
+                "yaml": yaml.safe_dump(document, sort_keys=False),
+                "note": "Initial default rules",
+                "status": "scheduled",
+            })
+        return
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS rules_versions (
@@ -251,16 +270,26 @@ def _now_iso() -> str:
     return datetime.now(ZoneInfo("Asia/Kolkata")).isoformat()
 
 
-def load_active(conn: sqlite3.Connection) -> Rules:
+def load_active(conn: Any) -> Rules:
     _ensure_default(conn)
+    if isinstance(conn, DynamoDBStore):
+        rows = logstore.list_rule_versions(conn, descending=True)
+        if not rows:
+            raise RuntimeError("Rules store is empty after initialization")
+        return _document_from_row(rows[0]["yaml"])
     row = conn.execute("SELECT yaml FROM rules_versions ORDER BY id DESC LIMIT 1").fetchone()
     if row is None:
         raise RuntimeError("Rules store is empty after initialization")
     return _document_from_row(row)
 
 
-def load_scheduled(conn: sqlite3.Connection) -> Rules:
+def load_scheduled(conn: Any) -> Rules:
     _ensure_default(conn)
+    if isinstance(conn, DynamoDBStore):
+        rows = logstore.list_rule_versions(conn, status="scheduled", descending=True)
+        if not rows:
+            raise RuntimeError("No scheduled rules version exists")
+        return _document_from_row(rows[0]["yaml"])
     row = conn.execute(
         "SELECT yaml FROM rules_versions WHERE status = 'scheduled' ORDER BY id DESC LIMIT 1"
     ).fetchone()
@@ -269,9 +298,17 @@ def load_scheduled(conn: sqlite3.Connection) -> Rules:
     return _document_from_row(row)
 
 
-def save_new_version(conn: sqlite3.Connection, doc: dict, note: str) -> int:
+def save_new_version(conn: Any, doc: dict, note: str) -> int:
     validate(doc)
     _ensure_default(conn)
+    if isinstance(conn, DynamoDBStore):
+        logstore.retire_scheduled_rules(conn)
+        return logstore.save_rule_version(conn, {
+            "created_at": _now_iso(),
+            "yaml": yaml.safe_dump(doc, sort_keys=False),
+            "note": note,
+            "status": "scheduled",
+        })
     with conn:
         conn.execute("UPDATE rules_versions SET status = 'retired' WHERE status = 'scheduled'")
         cursor = conn.execute(

@@ -1,5 +1,6 @@
 fastapi<1,>=0.110
 httpx<1,>=0.27
 kiteconnect<6,>=5.0
+boto3<2,>=1.34
 PyYAML<7,>=6.0
 uvicorn[standard]<1,>=0.29

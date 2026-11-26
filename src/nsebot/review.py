@@ -68,22 +68,18 @@ async def draft_review(data_dir: Path, day: str) -> dict[str, str | list[str]]:
     conn = logstore.connect(data_dir)
     try:
         events = [
-            dict(row) for row in conn.execute(
-                "SELECT ts, state_from, state_to, reason, reason_text, snapshot_json "
-                "FROM events WHERE day=? ORDER BY id",
-                (day,),
+            dict(row) for row in logstore.list_events(
+                conn,
+                day=day,
+                fields=("ts", "state_from", "state_to", "reason", "reason_text", "snapshot_json"),
             )
         ]
-        trade_row = conn.execute("SELECT * FROM trades WHERE day=?", (day,)).fetchone()
+        trade_row = logstore.get_trade(conn, day)
         trade = dict(trade_row) if trade_row else None
-        session = conn.execute(
-            "SELECT rules_version FROM sessions WHERE day=?", (day,)
-        ).fetchone()
+        session = logstore.get_session(conn, day)
         rules = None
         if session:
-            version = conn.execute(
-                "SELECT yaml FROM rules_versions WHERE id=?", (session["rules_version"],)
-            ).fetchone()
+            version = logstore.get_rule_version(conn, session["rules_version"])
             rules = version["yaml"] if version else None
     finally:
         conn.close()

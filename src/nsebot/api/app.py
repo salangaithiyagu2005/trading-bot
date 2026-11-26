@@ -174,15 +174,13 @@ async def _exchange_request_token(
 
 
 def _scheduled_doc(conn) -> dict:
-    row = conn.execute(
-        "SELECT yaml FROM rules_versions WHERE status='scheduled' ORDER BY id DESC LIMIT 1"
-    ).fetchone()
-    if row is None:
+    rows = logstore.list_rule_versions(conn, status="scheduled", descending=True)
+    if not rows:
         load_scheduled(conn)
-        row = conn.execute(
-            "SELECT yaml FROM rules_versions WHERE status='scheduled' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-    return yaml.safe_load(row["yaml"] if hasattr(row, "keys") else row[0])
+        rows = logstore.list_rule_versions(conn, status="scheduled", descending=True)
+    if not rows:
+        raise RuntimeError("No scheduled rules version exists")
+    return yaml.safe_load(rows[0]["yaml"])
 
 
 def _credential_summary(data_dir: Path) -> dict:
@@ -366,27 +364,19 @@ def create_app() -> FastAPI:
         today = now_ist().date().isoformat()
         conn = _connect()
         try:
-            session = conn.execute("SELECT * FROM sessions WHERE day=?", (today,)).fetchone()
+            session = logstore.get_session(conn, today)
             scheduled = _scheduled_doc(conn)
-            paper_count = conn.execute(
-                "SELECT COUNT(*) FROM trades WHERE mode='paper'"
-            ).fetchone()[0]
+            paper_count = logstore.count_trades(conn, mode="paper")
             row = dict(session) if session else {}
             health = _system_health(conn, data_dir)
-            bias_row = conn.execute(
-                """
-                SELECT snapshot_json FROM events
-                WHERE day=? AND reason IN ('bias_bullish', 'bias_bearish', 'bias_sideways')
-                ORDER BY id DESC LIMIT 1
-                """,
-                (today,),
-            ).fetchone()
+            bias_rows = [
+                event for event in logstore.list_events(conn, day=today)
+                if event["reason"] in {"bias_bullish", "bias_bearish", "bias_sideways"}
+            ]
+            bias_row = bias_rows[-1] if bias_rows else None
             bias_lines = json.loads(bias_row["snapshot_json"]).get("lines", []) if bias_row else []
-            open_trade = conn.execute(
-                "SELECT underlying, entry_price, stop_trigger, qty FROM trades "
-                "WHERE day=? AND exit_price IS NULL",
-                (today,),
-            ).fetchone()
+            open_trades = logstore.list_trades(conn, day=today, open_only=True)
+            open_trade = open_trades[0] if open_trades else None
         finally:
             conn.close()
         live_allowed = False
@@ -465,15 +455,9 @@ def create_app() -> FastAPI:
             health = _system_health(conn, data_dir)
             active = _scheduled_doc(conn)
             scheduled = _scheduled_doc(conn)
-            session = conn.execute(
-                "SELECT rules_version FROM sessions WHERE day=?",
-                (now_ist().date().isoformat(),),
-            ).fetchone()
+            session = logstore.get_session(conn, now_ist().date().isoformat())
             if session:
-                active_row = conn.execute(
-                    "SELECT yaml FROM rules_versions WHERE id=?",
-                    (session["rules_version"],),
-                ).fetchone()
+                active_row = logstore.get_rule_version(conn, session["rules_version"])
                 if active_row:
                     active = yaml.safe_load(active_row["yaml"])
         finally:
@@ -584,15 +568,7 @@ def create_app() -> FastAPI:
     ):
         conn = _connect()
         try:
-            clauses, params = [], []
-            if day:
-                clauses.append("day=?")
-                params.append(day)
-            if reason:
-                clauses.append("reason=?")
-                params.append(reason)
-            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
-            rows = conn.execute(f"SELECT * FROM events{where} ORDER BY id", params).fetchall()
+            rows = logstore.list_events(conn, day=day, reason=reason)
             return [dict(row) for row in rows]
         finally:
             conn.close()
@@ -602,7 +578,7 @@ def create_app() -> FastAPI:
         day = day or now_ist().date().isoformat()
         conn = _connect()
         try:
-            row = conn.execute("SELECT * FROM trades WHERE day=?", (day,)).fetchone()
+            row = logstore.get_trade(conn, day)
             return dict(row) if row else None
         finally:
             conn.close()
@@ -626,15 +602,10 @@ def create_app() -> FastAPI:
         conn = _connect()
         try:
             scheduled = _scheduled_doc(conn)
-            row = conn.execute(
-                "SELECT day, rules_version FROM sessions WHERE day=?",
-                (now_ist().date().isoformat(),),
-            ).fetchone()
+            row = logstore.get_session(conn, now_ist().date().isoformat())
             locked = None
             if row:
-                version = conn.execute(
-                    "SELECT yaml FROM rules_versions WHERE id=?", (row["rules_version"],)
-                ).fetchone()
+                version = logstore.get_rule_version(conn, row["rules_version"])
                 locked = yaml.safe_load(version["yaml"]) if version else None
             return {"scheduled": yaml.safe_dump(scheduled, sort_keys=False), "locked": locked}
         finally:
@@ -665,16 +636,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail="invalid_review_tag")
         conn = _connect()
         try:
-            conn.execute(
-                """
-                INSERT INTO reviews(day, tags, note, source, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(day) DO UPDATE SET tags=excluded.tags, note=excluded.note,
-                    source=excluded.source, created_at=excluded.created_at
-                """,
-                (body.day, json.dumps(body.tags), body.note, body.source, now_ist().isoformat()),
-            )
-            conn.commit()
+            logstore.save_review(conn, {
+                "day": body.day,
+                "tags": json.dumps(body.tags),
+                "note": body.note,
+                "source": body.source,
+                "created_at": now_ist().isoformat(),
+            })
         finally:
             conn.close()
         return {"saved": True}

@@ -9,12 +9,15 @@ src/nsebot/candles.py
 src/nsebot/chain.py
 src/nsebot/cli.py
 src/nsebot/clock.py
+src/nsebot/dynamodb.py
 src/nsebot/engine.py
 src/nsebot/execution.py
 src/nsebot/indicators.py
+src/nsebot/init_dynamodb.py
 src/nsebot/instruments.py
 src/nsebot/kite_gateway.py
 src/nsebot/logstore.py
+src/nsebot/migrate.py
 src/nsebot/paper.py
 src/nsebot/reconcile.py
 src/nsebot/review.py
@@ -34,6 +37,7 @@ src/nsebot/sets/__init__.py
 tests/test_api.py
 tests/test_cli.py
 tests/test_config_store.py
+tests/test_database.py
 tests/test_engine_safety.py
 tests/test_foundation.py
 tests/test_market_analysis.py

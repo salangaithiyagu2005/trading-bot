@@ -11,6 +11,7 @@ dependencies = [
     "fastapi>=0.110,<1",
     "httpx>=0.27,<1",
     "kiteconnect>=5.0,<6",
+    "boto3>=1.34,<2",
     "PyYAML>=6.0,<7",
     "uvicorn[standard]>=0.29,<1",
 ]
@@ -19,6 +20,8 @@ dependencies = [
 nsebot = "nsebot.cli:main"
 nsebot-engine = "nsebot.engine:main"
 nsebot-api = "nsebot.api.app:main"
+nsebot-migrate-sqlite = "nsebot.migrate:main"
+nsebot-dynamodb-init = "nsebot.init_dynamodb:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

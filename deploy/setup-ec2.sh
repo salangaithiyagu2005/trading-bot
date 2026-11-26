@@ -63,6 +63,9 @@ if [[ ! -e "${ENV_FILE}" ]]; then
 DATA_DIR=${DATA_DIR}
 REPO_DATA_DIR=${APP_DIR}/data
 LIVE_TRADING=false
+DATABASE_BACKEND=dynamodb
+DYNAMODB_TABLE=nsebot
+AWS_REGION=ap-south-1
 UI_PASSWORD=${ui_password}
 KITE_API_KEY=
 KITE_API_SECRET=
@@ -93,6 +96,26 @@ if ! grep -Eq '^UI_PASSWORD=[^[:space:]#][^#]*$' "${ENV_FILE}" \
     fail "Set a non-empty UI_PASSWORD in ${ENV_FILE}, then rerun."
 fi
 
+read_setting() {
+    local key="$1"
+    sed -n "s/^${key}=//p" "${ENV_FILE}" | tail -n 1
+}
+
+DATABASE_BACKEND="$(read_setting DATABASE_BACKEND)"
+case "${DATABASE_BACKEND}" in
+    sqlite)
+        ;;
+    dynamodb)
+        DYNAMODB_TABLE="$(read_setting DYNAMODB_TABLE)"
+        AWS_REGION="$(read_setting AWS_REGION)"
+        [[ -n "${DYNAMODB_TABLE}" ]] || fail "Set DYNAMODB_TABLE in ${ENV_FILE}."
+        [[ -n "${AWS_REGION}" ]] || fail "Set AWS_REGION in ${ENV_FILE}, then rerun setup."
+        ;;
+    *)
+        fail "DATABASE_BACKEND in ${ENV_FILE} must be sqlite or dynamodb."
+        ;;
+esac
+
 for unit in "${UNITS[@]}"; do
     if systemctl is-active --quiet "${unit}"; then
         systemctl stop "${unit}"
@@ -121,6 +144,11 @@ fi
     'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' \
     || fail "The existing ${APP_DIR}/.venv uses Python older than 3.12; replace it before deploying."
 "${APP_DIR}/.venv/bin/python" -m pip install "${APP_DIR}"
+
+if [[ "${DATABASE_BACKEND}" == "dynamodb" ]]; then
+    AWS_REGION="${AWS_REGION}" DYNAMODB_TABLE="${DYNAMODB_TABLE}" \
+        "${APP_DIR}/.venv/bin/nsebot-dynamodb-init"
+fi
 
 chown -R root:"${SERVICE_GROUP}" "${APP_DIR}"
 chmod -R o-rwx "${APP_DIR}"

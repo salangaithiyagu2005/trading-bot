@@ -1,4 +1,6 @@
 [console_scripts]
 nsebot = nsebot.cli:main
 nsebot-api = nsebot.api.app:main
+nsebot-dynamodb-init = nsebot.init_dynamodb:main
 nsebot-engine = nsebot.engine:main
+nsebot-migrate-sqlite = nsebot.migrate:main
